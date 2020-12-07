@@ -1,6 +1,5 @@
 #include <vector>
 #include "cpu/dcn_v2_im2col_cpu.h"
-
 #include <ATen/ATen.h>
 //#include <ATen/cuda/CUDAContext.h>
 
@@ -14,6 +13,7 @@
 // author: Charles Shang
 // https://github.com/torch/cunn/blob/master/lib/THCUNN/generic/SpatialConvolutionMM.cu
 // modified from the CUDA version for CPU use by Daniel K. Suhendro
+
 
 at::Tensor
 dcn_v2_cpu_forward(const at::Tensor &input,

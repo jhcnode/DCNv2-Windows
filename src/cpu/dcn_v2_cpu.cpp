@@ -1,5 +1,5 @@
 #include <vector>
-#include "cpu/dcn_v2_im2col_cpu.h"
+#include "dcn_v2_im2col_cpu.h"
 #include <ATen/ATen.h>
 //#include <ATen/cuda/CUDAContext.h>
 

@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cstring>
 
-#include <ATen/ATen.h>
+#include "ATen/ATen.h"
 //#include <ATen/cuda/CUDAContext.h>
 
 #include <TH/TH.h>

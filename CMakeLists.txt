@@ -3,8 +3,15 @@ project(DCNv2)
 
 find_package(CUDA QUIET REQUIRED)
 find_package(Python COMPONENTS Development)
+find_package(PythonLibs REQUIRED)
+
 include(FindCUDA)
 include(FindPython)
+
+
+
+
+
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -22,29 +29,33 @@ LIST(APPEND CUDA_NVCC_FLAGS "-D__CUDA_NO_HALF_OPERATORS__")
 LIST(APPEND CUDA_NVCC_FLAGS "-D__CUDA_NO_HALF2_OPERATORS__")
 LIST(APPEND CUDA_NVCC_FLAGS "-D__CUDA_NO_HALF_CONVERSIONS__")
 
+
 set(INCLUDE_DIRECTORIES
         ./src
+        ./src/cuda
+        ./src/cpu
         ${Python_RUNTIME_LIBRARY_DIRS}/lib/site-packages/torch/include
-        ${Python_RUNTIME_LIBRARY_DIRS}/lib/site-packages/torch/torch/csrc/api/include
+        ${Python_RUNTIME_LIBRARY_DIRS}/lib/site-packages/torch/include/torch/csrc/api/include
         ${Python_RUNTIME_LIBRARY_DIRS}/lib/site-packages/torch/include/TH
         ${Python_RUNTIME_LIBRARY_DIRS}/lib/site-packages/torch/include/THC
+        ${PYTHON_INCLUDE_DIRS}
         )
-include_directories(INCLUDE_DIRECTORIES)
-#message(${INCLUDE_DIRECTORIES})
+set(INCLUDE_LIBS
+    ${Python_RUNTIME_LIBRARY_DIRS}/libs)
+
+include_directories(${INCLUDE_DIRECTORIES})
+link_directories(${INCLUDE_LIBS})
+
+message(${INCLUDE_DIRECTORIES})
 
 
 set(SOURCE_FILES
         src/cpu/dcn_v2_cpu.cpp
-        src/cpu/dcn_v2_im2col_cpu.h
         src/cpu/dcn_v2_im2col_cpu.cpp
         src/cpu/dcn_v2_psroi_pooling_cpu.cpp
-        src/cpu/vision.h
         src/cuda/dcn_v2_cuda.cu
         src/cuda/dcn_v2_im2col_cuda.cu
-        src/cuda/dcn_v2_im2col_cuda.h
         src/cuda/dcn_v2_psroi_pooling_cuda.cu
-        src/cuda/vision.h
-        src/dcn_v2.h
 )
 
 add_library(cuda INTERFACE)
@@ -62,6 +73,6 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4819")
 add_definitions(-D_CRT_RAND_S)
-cuda_add_library(DCN32 ${SOURCE_FILES} src/vision.cpp)
+cuda_add_executable(DCN32 ${SOURCE_FILES} src/vision.cpp)
 target_link_libraries(DCN32 cuda)
 

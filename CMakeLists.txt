@@ -74,5 +74,6 @@ endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4819")
 add_definitions(-D_CRT_RAND_S)
 cuda_add_executable(DCN32 ${SOURCE_FILES} src/vision.cpp)
+set_target_properties(DCN32 PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 target_link_libraries(DCN32 cuda)
 

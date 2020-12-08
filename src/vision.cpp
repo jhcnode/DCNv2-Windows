@@ -1,5 +1,6 @@
 
 #include "dcn_v2.h"
+#include <iostream>
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("dcn_v2_forward", &dcn_v2_forward, "dcn_v2_forward");
@@ -9,9 +10,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 }
 
 
+/*
 int main()
 {
+    at::Tensor inputs=torch::randn({3,64, 64});
+    dcn_v2_cuda_forward()
+
 
     return 0;
 
-}
+}*/

@@ -93,7 +93,11 @@ class DCNv2(nn.Module):
                            self.dilation,
                            self.deformable_groups)
 
-
+    # def half(self):
+        # self.weight=self.weight.half()
+        # self.bias=self.bias.half()		
+		
+		
 class DCN(DCNv2):
 
     def __init__(self, in_channels, out_channels,
@@ -114,7 +118,8 @@ class DCN(DCNv2):
     def init_offset(self):
         self.conv_offset_mask.weight.data.zero_()
         self.conv_offset_mask.bias.data.zero_()
-
+    
+		
     def forward(self, input):
         out = self.conv_offset_mask(input)
         o1, o2, mask = torch.chunk(out, 3, dim=1)

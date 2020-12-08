@@ -67,10 +67,8 @@ def get_extensions():
 			extra_compile_args=extra_compile_args,
 		)
 	]
-	print("log:{}".format(include_dirs))
 
-	return
-	# return ext_modules
+	return ext_modules
 
 setup(
 name="DCNv2",

@@ -8,7 +8,7 @@
 #include <THC/THCAtomics.cuh>
 #include <THC/THCDeviceUtils.cuh>
 
-
+#define type_t(x) #x
 
 
 THCState *state = at::globalContext().lazyInitCUDA();
@@ -43,23 +43,23 @@ __global__ void createBatchGemmBuffer(const scalar_t **input_b, scalar_t **outpu
 }
 
 
-at::Tensor
-dcn_v2_cuda_forward(const at::Tensor &input,
-                    const at::Tensor &weight,
-                    const at::Tensor &bias,
-                    const at::Tensor &offset,
-                    const at::Tensor &mask,
-                    const int kernel_h,
-                    const int kernel_w,
-                    const int stride_h,
-                    const int stride_w,
-                    const int pad_h,
-                    const int pad_w,
-                    const int dilation_h,
-                    const int dilation_w,
-                    const int deformable_group)
+at::Tensor dcn_v2_fp32(const at::Tensor &input,
+                      const at::Tensor &weight,
+                      const at::Tensor &bias,
+                      const at::Tensor &offset,
+                      const at::Tensor &mask,
+                      const int kernel_h,
+                      const int kernel_w,
+                      const int stride_h,
+                      const int stride_w,
+                      const int pad_h,
+                      const int pad_w,
+                      const int dilation_h,
+                      const int dilation_w,
+                      const int deformable_group)
 {
 
+    using scalar_t = float;
     // THCAssertSameGPU(THCudaTensor_checkGPU(state, 5, input, weight, bias, offset, mask));
     AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
     AT_ASSERTM(weight.type().is_cuda(), "weight must be a CUDA tensor");
@@ -97,39 +97,33 @@ dcn_v2_cuda_forward(const at::Tensor &input,
     // prepare for batch-wise computing, which is significantly faster than instance-wise computing
     // when batch size is large.
     // launch batch threads
-    int matrices_size = batch * sizeof(scalar_t *);
-    auto input_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
-    auto output_b = static_cast<scalar_t **>(THCudaMalloc(state, matrices_size));
-    auto columns_b = static_cast<scalar_t **>(THCudaMalloc(state, matrices_size));
-    auto ones_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
-    auto weight_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
-    auto bias_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
+    int matrices_size = batch * sizeof(float *);
+    auto input_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
+    auto output_b = static_cast<float **>(THCudaMalloc(state, matrices_size));
+    auto columns_b = static_cast<float **>(THCudaMalloc(state, matrices_size));
+    auto ones_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
+    auto weight_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
+    auto bias_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
 
     const int block = 128;
     const int grid = (batch + block - 1) / block;
 
+    createBatchGemmBuffer<<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+            input_b, output_b,
+            columns_b, ones_b,
+            weight_b, bias_b,
+            input.data<scalar_t>(),
+            output.data<scalar_t>(),
+            columns.data<scalar_t>(),
+            ones.data<scalar_t>(),
+            weight.data<scalar_t>(),
+            bias.data<scalar_t>(),
+            channels * width * height,
+            channels_out * width_out * height_out,
+            channels * kernel_h * kernel_w * height_out * width_out,
+            height_out * width_out,
+            batch);
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.type(),"createBatchGemmBuffer",([&]{
-    createBatchGemmBuffer<scalar_t><<<grid, block, 0, c10::cuda::getCurrentCUDAStream().stream()>>>(
-    input_b, output_b,
-    columns_b, ones_b,
-    weight_b, bias_b,
-    input.data<scalar_t>(),
-    output.data<scalar_t>(),
-    columns.data<scalar_t>(),
-    ones.data<scalar_t>(),
-    weight.data<scalar_t>(),
-    bias.data<scalar_t>(),
-    channels * width * height,
-    channels_out * width_out * height_out,
-    channels * kernel_h * kernel_w * height_out * width_out,
-    height_out * width_out,
-    batch);
-    }
-    ));
-
-
-/*
     long m_ = channels_out;
     long n_ = height_out * width_out;
     long k_ = 1;
@@ -144,35 +138,19 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                             bias_b, k_,
                             0.0f,
                             output_b, n_,
-                            batch);*/
-/*
-    long m_ = channels_out;
-    long n_ = height_out * width_out;
-    long k_ = 1;
-    THCudaBlas_SgemmBatched(state,
-                            't',
-                            'n',
-                            n_,
-                            m_,
-                            k_,
-                            1.0f,
-                            ones_b, k_,
-                            bias_b, k_,
-                            0.0f,
-                            output_b, n_,
-                            batch);*/
+                            batch);
 
-/*    modulated_deformable_im2col_cuda<scalar_type>(c10::cuda::getCurrentCUDAStream(),
-                                     input.data<scalar_type>(),
-                                     offset.data<scalar_type>(),
-                                     mask.data<scalar_type>(),
+    modulated_deformable_im2col_cuda(c10::cuda::getCurrentCUDAStream(),
+                                     input.data<scalar_t>(),
+                                     offset.data<scalar_t>(),
+                                     mask.data<scalar_t>(),
                                      batch, channels, height, width,
                                      height_out, width_out, kernel_h, kernel_w,
                                      pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
                                      deformable_group,
-                                     columns.data<scalar_type>());*/
+                                     columns.data<scalar_t>());
 
-/*    long m = channels_out;
+    long m = channels_out;
     long n = height_out * width_out;
     long k = channels * kernel_h * kernel_w;
     THCudaBlas_SgemmBatched(state,
@@ -182,11 +160,11 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                             m,
                             k,
                             1.0f,
-                            (const scalar_type **)columns_b, n,
+                            (const float **)columns_b, n,
                             weight_b, k,
                             1.0f,
                             output_b, n,
-                            batch);*/
+                            batch);
 
     THCudaFree(state, input_b);
     THCudaFree(state, output_b);
@@ -195,6 +173,58 @@ dcn_v2_cuda_forward(const at::Tensor &input,
     THCudaFree(state, weight_b);
     THCudaFree(state, bias_b);
     return output;
+
+}
+
+
+at::Tensor dcn_v2_cuda_forward(const at::Tensor &input,
+                    const at::Tensor &weight,
+                    const at::Tensor &bias,
+                    const at::Tensor &offset,
+                    const at::Tensor &mask,
+                    const int kernel_h,
+                    const int kernel_w,
+                    const int stride_h,
+                    const int stride_w,
+                    const int pad_h,
+                    const int pad_w,
+                    const int dilation_h,
+                    const int dilation_w,
+                    const int deformable_group)
+{
+
+    if(input.scalar_type()==at::Half){
+        return dcn_v2_fp32(input,
+                           weight,
+                           bias,
+                           offset,
+                           mask,
+                           kernel_h,
+                           kernel_w,
+                           stride_h,
+                           stride_w,
+                           pad_h,
+                           pad_w,
+                           dilation_h,
+                           dilation_w,
+                           deformable_group);
+
+    }
+    return dcn_v2_fp32(input,
+    weight,
+    bias,
+    offset,
+    mask,
+    kernel_h,
+    kernel_w,
+    stride_h,
+    stride_w,
+    pad_h,
+    pad_w,
+    dilation_h,
+    dilation_w,
+    deformable_group);
+
 
 }
 

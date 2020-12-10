@@ -9,6 +9,8 @@
 #include <THC/THCDeviceUtils.cuh>
 
 
+
+
 THCState *state = at::globalContext().lazyInitCUDA();
 
 // author: Charles Shang
@@ -27,7 +29,7 @@ __global__ void createBatchGemmBuffer(const scalar_t **input_b, scalar_t **outpu
                                       const int columns_stride, const int ones_stride,
                                       const int num_batches)
 {
-/*    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < num_batches)
     {
         input_b[idx] = input + idx * input_stride;
@@ -37,9 +39,8 @@ __global__ void createBatchGemmBuffer(const scalar_t **input_b, scalar_t **outpu
         // share weights and bias within a Mini-Batch
         weight_b[idx] = weight;
         bias_b[idx] = bias;
-    }*/
+    }
 }
-
 
 
 at::Tensor
@@ -58,7 +59,6 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                     const int dilation_w,
                     const int deformable_group)
 {
-    using scalar_t = half;
 
     // THCAssertSameGPU(THCudaTensor_checkGPU(state, 5, input, weight, bias, offset, mask));
     AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
@@ -107,23 +107,30 @@ dcn_v2_cuda_forward(const at::Tensor &input,
 
     const int block = 128;
     const int grid = (batch + block - 1) / block;
-    createBatchGemmBuffer<scalar_t><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
-            input_b, output_b,
-            columns_b, ones_b,
-            weight_b, bias_b,
-            input.data<scalar_t>(),
-            output.data<scalar_t>(),
-            columns.data<scalar_t>(),
-            ones.data<scalar_t>(),
-            weight.data<scalar_t>(),
-            bias.data<scalar_t>(),
-            channels * width * height,
-            channels_out * width_out * height_out,
-            channels * kernel_h * kernel_w * height_out * width_out,
-            height_out * width_out,
-            batch);
 
-/*    long m_ = channels_out;
+
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.type(),"createBatchGemmBuffer",([&]{
+    createBatchGemmBuffer<scalar_t><<<grid, block, 0, c10::cuda::getCurrentCUDAStream().stream()>>>(
+    input_b, output_b,
+    columns_b, ones_b,
+    weight_b, bias_b,
+    input.data<scalar_t>(),
+    output.data<scalar_t>(),
+    columns.data<scalar_t>(),
+    ones.data<scalar_t>(),
+    weight.data<scalar_t>(),
+    bias.data<scalar_t>(),
+    channels * width * height,
+    channels_out * width_out * height_out,
+    channels * kernel_h * kernel_w * height_out * width_out,
+    height_out * width_out,
+    batch);
+    }
+    ));
+
+
+/*
+    long m_ = channels_out;
     long n_ = height_out * width_out;
     long k_ = 1;
     THCudaBlas_SgemmBatched(state,
@@ -137,19 +144,35 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                             bias_b, k_,
                             0.0f,
                             output_b, n_,
-                            batch);
+                            batch);*/
+/*
+    long m_ = channels_out;
+    long n_ = height_out * width_out;
+    long k_ = 1;
+    THCudaBlas_SgemmBatched(state,
+                            't',
+                            'n',
+                            n_,
+                            m_,
+                            k_,
+                            1.0f,
+                            ones_b, k_,
+                            bias_b, k_,
+                            0.0f,
+                            output_b, n_,
+                            batch);*/
 
-    modulated_deformable_im2col_cuda<scalar_t>(c10::cuda::getCurrentCUDAStream(),
-                                     input.data<scalar_t>(),
-                                     offset.data<scalar_t>(),
-                                     mask.data<scalar_t>(),
+/*    modulated_deformable_im2col_cuda<scalar_type>(c10::cuda::getCurrentCUDAStream(),
+                                     input.data<scalar_type>(),
+                                     offset.data<scalar_type>(),
+                                     mask.data<scalar_type>(),
                                      batch, channels, height, width,
                                      height_out, width_out, kernel_h, kernel_w,
                                      pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
                                      deformable_group,
-                                     columns.data<scalar_t>());
+                                     columns.data<scalar_type>());*/
 
-    long m = channels_out;
+/*    long m = channels_out;
     long n = height_out * width_out;
     long k = channels * kernel_h * kernel_w;
     THCudaBlas_SgemmBatched(state,
@@ -159,7 +182,7 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                             m,
                             k,
                             1.0f,
-                            (const half **)columns_b, n,
+                            (const scalar_type **)columns_b, n,
                             weight_b, k,
                             1.0f,
                             output_b, n,

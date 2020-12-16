@@ -5,4 +5,4 @@ To Do
 1. DCN half support
 2. DCN half2 support
 3. DCN Darknet support 
-4. Weight Convert  
+4. Weight Convert (PyTorch <-> Darknet)

@@ -8,8 +8,6 @@
 #include <THC/THCAtomics.cuh>
 #include <THC/THCDeviceUtils.cuh>
 
-#define type_t(x) #x
-
 
 THCState *state = at::globalContext().lazyInitCUDA();
 
@@ -18,7 +16,7 @@ THCState *state = at::globalContext().lazyInitCUDA();
 
 // [batch gemm]
 // https://github.com/pytorch/pytorch/blob/master/aten/src/THC/generic/THCTensorMathBlas.cu
-template<typename scalar_t=float>
+template<typename scalar_t>
 __global__ void createBatchGemmBuffer(const scalar_t **input_b, scalar_t **output_b,
                                       scalar_t **columns_b, const scalar_t **ones_b,
                                       const scalar_t **weight_b, const scalar_t **bias_b,
@@ -176,6 +174,138 @@ at::Tensor dcn_v2_fp32(const at::Tensor &input,
 
 }
 
+at::Tensor dcn_v2_fp16(const at::Tensor &input,
+                       const at::Tensor &weight,
+                       const at::Tensor &bias,
+                       const at::Tensor &offset,
+                       const at::Tensor &mask,
+                       const int kernel_h,
+                       const int kernel_w,
+                       const int stride_h,
+                       const int stride_w,
+                       const int pad_h,
+                       const int pad_w,
+                       const int dilation_h,
+                       const int dilation_w,
+                       const int deformable_group)
+{
+
+    using scalar_t = half;
+
+    // THCAssertSameGPU(THCudaTensor_checkGPU(state, 5, input, weight, bias, offset, mask));
+    AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
+    AT_ASSERTM(weight.type().is_cuda(), "weight must be a CUDA tensor");
+    AT_ASSERTM(bias.type().is_cuda(), "bias must be a CUDA tensor");
+    AT_ASSERTM(offset.type().is_cuda(), "offset must be a CUDA tensor");
+    AT_ASSERTM(mask.type().is_cuda(), "mask must be a CUDA tensor");
+
+    const int batch = input.size(0);
+    const int channels = input.size(1);
+    const int height = input.size(2);
+    const int width = input.size(3);
+
+    const int channels_out = weight.size(0);
+    const int channels_kernel = weight.size(1);
+    const int kernel_h_ = weight.size(2);
+    const int kernel_w_ = weight.size(3);
+
+    // printf("Kernels: %d %d %d %d\n", kernel_h_, kernel_w_, kernel_w, kernel_h);
+    // printf("Channels: %d %d\n", channels, channels_kernel);
+    // printf("Channels: %d %d\n", channels_out, channels_kernel);
+
+    AT_ASSERTM(kernel_h_ == kernel_h && kernel_w_ == kernel_w,
+               "Input shape and kernel shape wont match: (%d x %d vs %d x %d).", kernel_h_, kernel_w, kernel_h_, kernel_w_);
+
+    AT_ASSERTM(channels == channels_kernel,
+               "Input shape and kernel channels wont match: (%d vs %d).", channels, channels_kernel);
+
+    const int height_out = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+    const int width_out = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+
+    auto ones = at::ones({batch, height_out, width_out}, input.options());
+    auto columns = at::empty({batch, channels * kernel_h * kernel_w, 1 * height_out * width_out}, input.options());
+    auto output = at::empty({batch, channels_out, height_out, width_out}, input.options());
+
+    // prepare for batch-wise computing, which is significantly faster than instance-wise computing
+    // when batch size is large.
+    // launch batch threads
+    int matrices_size = batch * sizeof(scalar_t *);
+    auto input_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
+    auto output_b = static_cast<scalar_t **>(THCudaMalloc(state, matrices_size));
+    auto columns_b = static_cast<scalar_t **>(THCudaMalloc(state, matrices_size));
+    auto ones_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
+    auto weight_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
+    auto bias_b = static_cast<const scalar_t **>(THCudaMalloc(state, matrices_size));
+
+    const int block = 128;
+    const int grid = (batch + block - 1) / block;
+
+    createBatchGemmBuffer<<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+            input_b, output_b,
+            columns_b, ones_b,
+            weight_b, bias_b,
+            input.data<scalar_t>(),
+            output.data<scalar_t>(),
+            columns.data<scalar_t>(),
+            ones.data<scalar_t>(),
+            weight.data<scalar_t>(),
+            bias.data<scalar_t>(),
+            channels * width * height,
+            channels_out * width_out * height_out,
+            channels * kernel_h * kernel_w * height_out * width_out,
+            height_out * width_out,
+            batch);
+/*    long m_ = channels_out;
+    long n_ = height_out * width_out;
+    long k_ = 1;
+    THCudaBlas_SgemmBatched(state,
+                            't',
+                            'n',
+                            n_,
+                            m_,
+                            k_,
+                            1.0f,
+                            ones_b, k_,
+                            bias_b, k_,
+                            0.0f,
+                            output_b, n_,
+                            batch);
+
+    modulated_deformable_im2col_cuda(c10::cuda::getCurrentCUDAStream(),
+                                     input.data<scalar_t>(),
+                                     offset.data<scalar_t>(),
+                                     mask.data<scalar_t>(),
+                                     batch, channels, height, width,
+                                     height_out, width_out, kernel_h, kernel_w,
+                                     pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
+                                     deformable_group,
+                                     columns.data<scalar_t>());
+
+    long m = channels_out;
+    long n = height_out * width_out;
+    long k = channels * kernel_h * kernel_w;
+    THCudaBlas_SgemmBatched(state,
+                            'n',
+                            'n',
+                            n,
+                            m,
+                            k,
+                            1.0f,
+                            (const float **)columns_b, n,
+                            weight_b, k,
+                            1.0f,
+                            output_b, n,
+                            batch);*/
+
+    THCudaFree(state, input_b);
+    THCudaFree(state, output_b);
+    THCudaFree(state, columns_b);
+    THCudaFree(state, ones_b);
+    THCudaFree(state, weight_b);
+    THCudaFree(state, bias_b);
+    return output;
+
+}
 
 at::Tensor dcn_v2_cuda_forward(const at::Tensor &input,
                     const at::Tensor &weight,
@@ -193,8 +323,10 @@ at::Tensor dcn_v2_cuda_forward(const at::Tensor &input,
                     const int deformable_group)
 {
 
-    if(input.scalar_type()==at::Half){
-        return dcn_v2_fp32(input,
+    if(input.scalar_type()==at::kHalf)
+    {
+
+       return dcn_v2_fp16(input,
                            weight,
                            bias,
                            offset,
@@ -209,7 +341,11 @@ at::Tensor dcn_v2_cuda_forward(const at::Tensor &input,
                            dilation_w,
                            deformable_group);
 
+
+
     }
+
+
     return dcn_v2_fp32(input,
     weight,
     bias,
